@@ -1,0 +1,23 @@
+{
+  "image": "equation.png",
+  "imageWidth": 771,
+  "imageHeight": 147,
+  "boxes": [
+    {
+      "label": "weights",
+      "color": "blue",
+      "x": 338,
+      "y": 10,
+      "w": 234,
+      "h": 129
+    },
+    {
+      "label": "samples",
+      "color": "orange",
+      "x": 584,
+      "y": 10,
+      "w": 183,
+      "h": 129
+    }
+  ]
+}
