@@ -10,6 +10,17 @@
     content="Project page for Calibrated Test-Time Guidance for Bayesian Inference."
   />
 
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['\\(', '\\)']],
+        displayMath: [['\\[', '\\]']]
+      },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
   <link rel="stylesheet" href="style.css" />
 </head>
 
@@ -27,7 +38,11 @@
       <p class="venue">ICML 2026</p>
 
       <p class="summary">
-        Existing test-time guidance methods for diffusion models don't recover the correct posterior distribution. We propose estimators that enable calibrated sampling.
+        Test-time guidance turns a pretrained diffusion model into a reusable prior,
+        solving a wide variety of tasks without training a conditional model. At inference time, we combine it with a new likelihood, reward, or physics
+        constraint that may not have been available during training. Calibrated Bayesian
+        Guidance (CBG) gives consistent estimators for sampling the resulting Bayesian
+        diffusion posterior instead of just optimizing reward.
       </p>
 
       <div class="button-row">
@@ -47,8 +62,8 @@
     <div class="hero-figure">
         <img src="imgs/fig-1.png" alt="Overview figure for Calibrated Bayesian Guidance" />
         <p class="img-explanation">
-            <i>(Left)</i> Our CBG estimators recover the exact Bayesian posterior distribution, while other estimators are biased.<br>
-            <i>(Right)</i> Our CBG estimators apply the guidance scale correctly, while many existing methods apply it in the wrong place, leading to biased distributions.
+            <i>(Left)</i> CBG estimators recover the Bayesian posterior, while common guidance approximations are biased.<br>
+            <i>(Right)</i> CBG applies the guidance scale inside the diffused likelihood, avoiding the bias caused by naively rescaling noisy gradients.
         </p>
     </div>
   </header>
@@ -57,12 +72,31 @@
     <section class="section teaser fade-in">
       <div class="teaser-panel">
         <div class="teaser-copy">
-          <h2>How it Works</h2>
+          <h2>Test-Time Guidance as Bayesian Inference</h2>
 
           <p>
-            Calibrated Bayesian Guidance (CBG) produces a direction to take each diffusion
-            step that is consistent with the true Bayesian posterior.
-            We propose a gradient-free estimator that works by drawing samples from the true diffusion posterior and evaluating their likelihoods. Then, we compute a likelihood-weighted average of the samples to give a direction for the diffusion step while avoiding gradients.
+            Many scientific inverse problems are too specialized to train a new conditional
+            generative model for every measurement process. Test-time guidance solves this
+            by reusing a pretrained diffusion model as a prior \(p(x)\), then injecting a
+            task-specific likelihood or reward only at sampling time.
+          </p>
+
+          <p>
+            At the clean-data level, the target posterior is
+            \[
+              p(x \mid y) \propto p(x)\,p(y \mid x),
+              \qquad p(y \mid x) \propto \exp(r(x; y)).
+            \]
+            Along the diffusion trajectory, this induces a posterior over the noisy state
+            \(x_t\):
+            \[
+              p(x_t \mid y) \propto p(x_t)\,p(y \mid x_t),
+              \qquad
+              p(y \mid x_t) = \int p(x \mid x_t)\,p(y \mid x)\,dx.
+            \]
+            Here \(p(x \mid x_t)\) is the denoising distribution from the forward noising
+            process. It is not the task-conditioned Bayesian posterior; the observation
+            \(y\) enters through the likelihood weights.
           </p>
         </div>
 
@@ -73,70 +107,138 @@
 
           <figcaption class="estimator-caption">
             <p>
-              Gradient-free CBG draws 3 samples from a noisy state, and computes the likelihood-weighted average.
+              Gradient-free CBG samples clean candidates from \(p(x \mid x_t)\), scores them
+              with \(p(y \mid x)\), and uses a likelihood-weighted average to guide the next
+              denoising step. The animation shows \(K=3\) candidates for illustration.
             </p>
           </figcaption>
         </figure>
       </div>
     </section>
 
-    
-
     <section class="section fade-in">
       <div class="section-heading">
-        <h2>Why standard guidance can fail</h2>
+        <h2>The Guidance Gradient of the Bayesian Posterior</h2>
       </div>
 
       <div class="text-block">
         <p>
-          To sample from the Bayesian posterior, guidance should use the diffused likelihood:
-          an average of the likelihood over samples from the true diffusion posterior
-          <span class="math">p(x | x<sub>t</sub>)</span>.
-          Existing methods use approximations to avoid this integral, such as Tweedie's mean estimate or a Gaussian approximation.
-          These approximations are biased, so adding more compute makes them converge more confidently to the wrong distribution rather than to the
-          true Bayesian posterior.
+          Bayes' rule gives the score needed by a guided diffusion sampler:
+          \[
+            \nabla_{x_t}\log p(x_t \mid y)
+            =
+            \underbrace{\nabla_{x_t}\log p(x_t)}_{\text{pretrained diffusion prior}}
+            +
+            \underbrace{\nabla_{x_t}\log p(y \mid x_t)}_{\text{guidance term}}.
+          \]
+          The first term is already learned by the pretrained diffusion model. The hard part
+          is the diffused likelihood gradient, because \(p(y \mid x_t)\) averages the clean-data
+          likelihood over all plausible denoisings of \(x_t\).
+        </p>
+
+        <p>
+          CBG estimates this term with the REINFORCE identity. After simplifying with the Gaussian forward process
+          \(p(x_t \mid x)=\mathcal{N}(x_t; a_t x, b_t^2 I)\), the gradient-free estimator is
+          particularly simple:
+          \[
+            \nabla_{x_t}\log p(x_t \mid y)
+            \approx
+            \frac{\sum_{i=1}^{K} w_i\,\frac{a_t x^{(i)} - x_t}{b_t^2}}
+                 {\sum_{i=1}^{K} w_i},
+            \qquad
+            x^{(i)} \sim p(x \mid x_t),
+            \quad
+            w_i = p(y \mid x^{(i)}).
+          \]
+          This requires only likelihood evaluations, so it also works for black-box or
+          non-differentiable rewards. For differentiable rewards, CBG also admits a
+          reparameterization-gradient estimator; see the paper for the full derivation.
         </p>
       </div>
     </section>
 
     <section class="section fade-in">
       <div class="section-heading">
-        <h2>Fast sampling</h2>
+        <h2>Why Standard Guidance Can Fail</h2>
       </div>
 
       <div class="text-block">
         <p>
-          CBG relies on drawing candidate samples from the diffusion posterior
-          <span class="math">p(x | x<sub>t</sub>)</span> at each denoising step, but doing this with a full
-          inner diffusion sampler can be extremely expensive.
-          In the case where we are working with closed-form likelihoods and distributions, we can build an analytic sampler directly, but when scaling up to images, this is not possible.
-          We propose an alternative solution that uses one-step or few-step models to approximate these posterior samples.
-          We use deterministic one-step models
-          <span class="math"> x=f<sub>t</sub>(x<sub>t</sub>)</span>
-          , and sample from the stochastic posterior using renoising.
+          The calibrated guidance term depends on the true diffused likelihood
+          \[
+            p(y \mid x_t) = \int p(x \mid x_t)p(y \mid x)dx.
+          \]
+          Many existing methods avoid this integral by replacing the denoising distribution
+          \(p(x \mid x_t)\) with a point estimate, such as \(\mathbb{E}[x \mid x_t]\), or with
+          a Gaussian proxy. These approximations can be useful for reward maximization, but
+          they are biased for posterior sampling: more compute can reduce variance while still
+          converging to the wrong distribution.
+        </p>
+
+        <p>
+          The same issue appears when using a guidance scale \(\gamma\). For calibrated
+          tempered inference, the target is
+          \[
+            p(x \mid y, \gamma) \propto p(x)p(y \mid x)^\gamma.
+          \]
+          Therefore the scaled likelihood must be diffused as
+          \[
+            p(y \mid x_t, \gamma)
+            \propto
+            \int p(x \mid x_t)p(y \mid x)^\gamma dx,
+          \]
+          rather than by simply multiplying \(\nabla_{x_t}\log p(y \mid x_t)\) by \(\gamma\).
+          CBG puts the likelihood, reward, and guidance scale inside the same expectation,
+          which is what makes the resulting sampler calibrated.
+        </p>
+      </div>
+    </section>
+
+    <section class="section fade-in">
+      <div class="section-heading">
+        <h2>Fast Sampling</h2>
+      </div>
+
+      <div class="text-block">
+        <p>
+          CBG relies on candidate clean samples from the denoising distribution
+          \(p(x \mid x_t)\) at each step. With analytic priors and likelihoods, this distribution
+          can sometimes be sampled in closed form. For images and other high-dimensional
+          scientific data, running a full inner diffusion sampler for every candidate would be
+          too expensive.
+        </p>
+
+        <p>
+          To make CBG practical, we use one-step or few-step models to approximate these
+          candidates. In particular, a deterministic one-step or few-step denoiser \(x=f_t(x_t)\) can be
+          turned into a stochastic candidate generator by renoising:
+          \[
+            x^{(i)} = f_t\!\left(a_t f_t(x_t) + b_t\epsilon^{(i)}\right),
+            \qquad
+            \epsilon^{(i)} \sim \mathcal{N}(0, I).
+          \]
+          This reduces the cost to draw the intermediate samples by several orders of magnitude compared to drawing samples from a diffusion model.
         </p>
       </div>
 
       <figure class="estimator-demo">
         <div class="animation-box">
-          <!-- <canvas id="estimatorCanvas" width="500" height="500"></canvas> -->
+          <canvas id="renoiseCanvas" width="1000" height="1000"></canvas>
         </div>
 
         <figcaption class="estimator-caption">
           <p>
-            Renoising used to draw stochastic samples from the diffusion posterior.
+            Renoising generates diverse candidate samples from a fast deterministic model. The animation shows \(K=3\) candidates for illustration.
           </p>
         </figcaption>
       </figure>
     </section>
 
-
-
     <section class="section fade-in" id="results">
       <div class="section-heading">
         <h2>Benchmarking CBG</h2>
         <p>
-          Across several diverse benchmarks, CBG gives better performance than other test-time guidance methods, and improves performance as the compute budget increases.
+          Across several diverse benchmarks, CBG gives better calibrated posterior samples than other test-time guidance methods, and improves as the likelihood-evaluation budget increases.
         </p>
       </div>
 
@@ -166,12 +268,13 @@
 
         <article class="result-block">
           <div class="result-copy">
-            <h3>Black-hole Imaging</h3>
+            <h3>Black-Hole Imaging</h3>
             <p>
-              We apply CBG to a scientific inverse problem, reconstructing black-hole images from
-              radio-telescope measurements. Using the gradient-free estimator, CBG produces
-              reconstructions that remain visually consistent with the ground truth and reaches
-              stronger PSNR as the number of per-step posterior samples increases.
+              We apply CBG to a scientific inverse problem: reconstructing black-hole images from
+              radio-telescope measurements. The pretrained diffusion model acts as an image prior,
+              while the measurement model supplies the likelihood. Using the gradient-free estimator,
+              CBG produces reconstructions that remain visually consistent with the ground truth and
+              reaches stronger PSNR as the number of per-step denoising candidates increases.
             </p>
           </div>
 
@@ -182,7 +285,7 @@
             />
             <figcaption>
               Uncurated comparison of CBG+DDPM with other test-time guidance methods for the black-hole imaging task.
-              Despite computing no likelihood gradient, gradient-free CBG is able to reconstruct the ground truth samples well.
+              Despite computing no likelihood gradient, gradient-free CBG reconstructs the ground truth samples well.
             </figcaption>
 
             <img
@@ -190,7 +293,7 @@
               alt="Black-hole imaging increasing K"
             />
             <figcaption>
-              Increasing the number of samples K per denoising step consistently increases PSNR for the black-hole imaging task.
+              Increasing the number of samples \(K\) per denoising step consistently increases PSNR for the black-hole imaging task.
             </figcaption>
           </figure>
         </article>
@@ -200,10 +303,10 @@
             <h3>Image Inverse Problems</h3>
             <p>
               We also apply CBG to two image tasks: 4x super-resolution and prompt alignment.
-              In super-resolution, it reconstructs 256 × 256 images
-              from 64 × 64 inputs by using the low-resolution observation as a likelihood.
-              In prompt alignment, it uses a vision-language
-              reward model to guide text-to-image generation toward exact constraints in the prompt.
+              In super-resolution, CBG reconstructs 256 &times; 256 images from 64 &times; 64 inputs by
+              treating the low-resolution observation as a likelihood. In prompt alignment, CBG
+              uses a vision-language reward model as \(r(x; y)\) to guide text-to-image generation
+              toward exact prompt constraints.
             </p>
           </div>
 
@@ -243,7 +346,7 @@
   <footer class="footer">
     <p>
       Calibrated Test-Time Guidance for Bayesian Inference
-      ·
+      &middot;
       <a href="https://github.com/mandt-lab/Calibrated-Guidance" target="_blank" rel="noreferrer">
         GitHub
       </a>
@@ -251,5 +354,6 @@
   </footer>
 
   <script src="script.js"></script>
+  <script src="anim2.js"></script>
 </body>
 </html>
